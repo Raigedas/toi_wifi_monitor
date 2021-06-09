@@ -1,7 +1,7 @@
 
 #include "pitches.h"
 
-#include "player.h"
+#include "melody_player.h"
 
 #include <ESP8266WiFi.h>
 #include <Pinger.h>
@@ -12,7 +12,33 @@
 
 #include "Switch.h"
 
+#include "melody_player.h"
+
 #include <StreamString.h>
+
+
+MelodyPart noWifiMelody[] = {
+  // police fast
+  {635, 912, 1000, 0},
+  {912, 635, 1000, 0}
+};
+
+MelodyPart noInternetMelody[] = {
+  // police slow
+  {635, 912, 5000, 0},
+  {912, 635, 5000, 0}
+};
+
+MelodyPart groupDownMelody[] = {
+  {NOTE_A6, -1, 70, 70},
+  {NOTE_A6, -1, 70, 70},
+  {NOTE_A6, -1, 70, 3000},
+};
+
+MelodyPart noPowerMelody[] = {
+  {NOTE_C6, -1, 100, 100},
+  {NOTE_A6, -1, 100, 800}
+};
 
 
 #define CHECK_STATUS_OK -1
@@ -91,11 +117,12 @@ ESP8266WebServer server(80);
 
 Switch button = Switch(BUTTON_PIN);
 
+MelodyPlayer melodyPlayer = MelodyPlayer(SPEAKER_PIN);
+
 bool ignoreGroupDown = false;
 
 CircularBuffer<int,5> batteryVoltagesBuffer;
 float batteryVoltageAverage = 0;
-
 
 
 void playMelody() {
@@ -370,6 +397,9 @@ void setup() {
   setBadResultStatus(&checkResult.power);
   
   setupServer();
+
+  
+    melodyPlayer.play(1, noInternetMelody, sizeof(noInternetMelody)/sizeof(MelodyPart));
 }
 
 void loop() {
@@ -388,6 +418,10 @@ void loop() {
     //Serial.printf("secondsIncreased a %d\n", secondsIncreased);
   }
 
+  melodyPlayer.handle();
+  
+  button.poll();
+
   if (isWifiConnected()) {
     if (!otaInitialized) {
       setupOta();
@@ -395,8 +429,6 @@ void loop() {
     
     ArduinoOTA.handle();
   }
-  
-  button.poll();
   
   
   float sensorValue = analogRead(ADC_BATTERY_VCC_PIN);
@@ -576,17 +608,17 @@ void increasePingWifiMonitorIndex() {
 
 void setAlarm() {
   if (checkResult.wifi == CHECK_STATUS_BAD_TIMEOUT) {
-    tone(SPEAKER_PIN, NOTE_G3);
+    melodyPlayer.play(4, noWifiMelody, sizeof(noWifiMelody)/sizeof(MelodyPart));
   } else if (checkResult.internet == CHECK_STATUS_BAD_TIMEOUT) {
-    tone(SPEAKER_PIN, NOTE_C3);
+    melodyPlayer.play(3, noInternetMelody, sizeof(noInternetMelody)/sizeof(MelodyPart));
   } else if (checkResult.group == CHECK_STATUS_BAD_TIMEOUT) {
     if (!ignoreGroupDown) {
-      tone(SPEAKER_PIN, NOTE_D3);
+      melodyPlayer.play(2, groupDownMelody, sizeof(groupDownMelody)/sizeof(MelodyPart));
     } else {
-      noTone(SPEAKER_PIN);
+      melodyPlayer.stop();
     }
   } else if (checkResult.power == CHECK_STATUS_BAD_TIMEOUT) {
-    tone(SPEAKER_PIN, NOTE_E3);
+    melodyPlayer.play(1, noPowerMelody, sizeof(noPowerMelody)/sizeof(MelodyPart));
   }
 }
 
