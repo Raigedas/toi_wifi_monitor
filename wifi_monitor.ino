@@ -8,6 +8,10 @@
 #include <ArduinoOTA.h>
 #include <IPAddress.h>
 
+#include <ESP8266WebServer.h>
+
+#include "Switch.h"
+
 #include <StreamString.h>
 
 
@@ -39,6 +43,11 @@ struct CheckResult {
 
 
 #include "configuration.h"
+
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#include <CircularBuffer.h>
 
 
 WifiMonitor* wifiMonitors;
@@ -72,6 +81,21 @@ WifiMonitor *me = NULL;
 bool otaInitialized = false;
 
 unsigned long lastTimeIncrement = 0;
+
+#define OLED_RESET 0  // GPIO0
+Adafruit_SSD1306 display(OLED_RESET);
+
+float scannerAngle = 0;
+
+ESP8266WebServer server(80);
+
+Switch button = Switch(BUTTON_PIN);
+
+bool ignoreGroupDown = false;
+
+CircularBuffer<int,5> batteryVoltagesBuffer;
+float batteryVoltageAverage = 0;
+
 
 
 void playMelody() {
@@ -249,12 +273,77 @@ bool onOnePingResultPinger(const PingerResponse &response) {
 }
 
 
+void handleRoot() {
+  String out = "<html><head><meta charset=\"UTF-8\"/><meta http-equiv=\"refresh\" content=\"";
+  out += WEBPAGE_RELOAD_INTERVAL_SECONDS;
+  out += "\"><title>WiFi Monitor ";
+  out += mac;
+  out += "</title></head>";
+  out += "<body style='background-color:transparent'>";
+  
+  out += "<p>";
+  out += "Check Status: ";
+  if (checkResult.wifi == CHECK_STATUS_BAD_TIMEOUT) {
+    out += "No WiFi";
+  } else if (checkResult.internet == CHECK_STATUS_BAD_TIMEOUT) {
+    out += "No Internet";
+  } else if (checkResult.group == CHECK_STATUS_BAD_TIMEOUT) {
+    out += "Group down";
+  } else if (checkResult.power == CHECK_STATUS_BAD_TIMEOUT) {
+    out += "No Power";
+  } else {
+    out += "OK. <br/>Scanner angle: ";
+    out += String((int)scannerAngle);
+    out += "°";
+  }
+  out += "<br/>";
+  out += "</p>";
+  
+  out += "<p>Battery Voltage: ";
+  out += String(batteryVoltageAverage);
+  out += " V</p>";
+  
+  out += "<p>MAC: ";
+  out += mac;
+  out += "</p>";
+  
+  out += "</body>";
+  out += "</html>";
+  server.send(200, "text/html", out);
+}
+
+void setupServer() {
+  server.on("/", handleRoot);
+  server.on("/", []() {handleRoot();} );
+  server.on("/h", []() {
+    Serial.println("handicap?"); 
+//    handicapSignVisible = !handicapSignVisible;
+    handleRoot(); 
+   } );
+  server.on("/d", []() {
+    Serial.println("dark");  
+//    displayShowTime = 20;
+    handleRoot(); 
+  } );
+  server.on("/b", []() {
+    Serial.println("dark"); 
+//    displayShowTime = 60;
+    handleRoot(); 
+  } );
+  server.begin();
+  Serial.println("HTTP server started");
+}
+
+
 void setup() {
   Serial.begin(115200);
   Serial.println();
   
   playMelody();
   pinMode(SPEAKER_PIN, OUTPUT);
+
+  display.begin(SSD1306_SWITCHCAPVCC, SSD1306_I2C_ADDRESS);
+  display.clearDisplay();
 
   //beepAll();
 //  for (int i = 0; i < 5; i++) {
@@ -279,6 +368,8 @@ void setup() {
   setBadResultStatus(&checkResult.internet);
   setBadResultStatus(&checkResult.group);
   setBadResultStatus(&checkResult.power);
+  
+  setupServer();
 }
 
 void loop() {
@@ -304,6 +395,27 @@ void loop() {
     
     ArduinoOTA.handle();
   }
+  
+  button.poll();
+  
+  
+  float sensorValue = analogRead(ADC_BATTERY_VCC_PIN);
+//  Serial.print("sensor = ");
+//  Serial.println(sensorValue);
+  batteryVoltagesBuffer.push(sensorValue);
+  
+  float average = 0.0;
+  for (unsigned char i = 0; i < batteryVoltagesBuffer.size(); i++) {
+    average += batteryVoltagesBuffer[i];
+  }
+  average /= (float)batteryVoltagesBuffer.size();
+  average = calculateVoltage(average);
+  
+  batteryVoltageAverage = average;
+//  Serial.print("avg ");
+//  Serial.println(batteryVoltageAverage);
+
+
 
   if (secondsIncreased) {
     //Serial.printf("secondsIncreased b %d\n", secondsIncreased);
@@ -350,6 +462,12 @@ void loop() {
       }
     }
 
+    if (batteryVoltageAverage < BATTERY_VOLTAGE_MINIMUM) {
+      setBadResultStatus(&checkResult.power);
+    } else {
+      setGoodResultStatus(&checkResult.power);
+    }
+
     decreaseResultStatus(secondsIncreased);
     
     if (checkResult.wifi == CHECK_STATUS_BAD_TIMEOUT) {
@@ -364,24 +482,22 @@ void loop() {
   
   }
 
-  // TODO: alarm
-  if (checkResult.wifi == CHECK_STATUS_BAD_TIMEOUT) {
-    delay(5); // delay to avoid crash!
-    tone(SPEAKER_PIN, NOTE_G3, 200);
-//    delay(200);
-//    tone(SPEAKER_PIN, NOTE_A7, 1);
-//    analogWriteFreq(700);
-//    analogWrite(SPEAKER_PIN, 511);
-  } else if (checkResult.internet == CHECK_STATUS_BAD_TIMEOUT) {
-    tone(SPEAKER_PIN, NOTE_C3, 1);
-  } else if (checkResult.group == CHECK_STATUS_BAD_TIMEOUT) {
-    tone(SPEAKER_PIN, NOTE_D3, 200);
-//    analogWriteFreq(800);
-//    analogWrite(SPEAKER_PIN, 511);
-  } else if (checkResult.power == CHECK_STATUS_BAD_TIMEOUT) {
-    tone(SPEAKER_PIN, NOTE_E3, 1);
-  } 
-  
+  if (button.released()) {
+    if (checkResult.group == CHECK_STATUS_BAD_TIMEOUT) {
+      Serial.println("will ignore group down");
+      ignoreGroupDown = true;
+    }
+  }
+
+  display.clearDisplay();
+  drawCheckResult();
+  display.display();
+  scannerAngle += 19;
+  while (scannerAngle >= 360) {
+    scannerAngle -= 360;
+  }
+
+  server.handleClient();
 }
 
 bool pingForMonitor(WifiMonitor *monitor) {
@@ -444,6 +560,10 @@ byte getMonitorStartIndex() {
   return (meDefined ? 1 : 0);
 }
 
+byte getMonitorCountEffective() {
+  return getAllocatedMonitorCount() -getMonitorStartIndex();
+}
+
 void increasePingWifiMonitorIndex() {
   pingWifiMonitorIndex++;
   pingWifiMonitorIndex %= getAllocatedMonitorCount();
@@ -452,6 +572,22 @@ void increasePingWifiMonitorIndex() {
   }
   
   //Serial.printf("increasePingWifiMonitorIndex %d\n", pingWifiMonitorIndex);
+}
+
+void setAlarm() {
+  if (checkResult.wifi == CHECK_STATUS_BAD_TIMEOUT) {
+    tone(SPEAKER_PIN, NOTE_G3);
+  } else if (checkResult.internet == CHECK_STATUS_BAD_TIMEOUT) {
+    tone(SPEAKER_PIN, NOTE_C3);
+  } else if (checkResult.group == CHECK_STATUS_BAD_TIMEOUT) {
+    if (!ignoreGroupDown) {
+      tone(SPEAKER_PIN, NOTE_D3);
+    } else {
+      noTone(SPEAKER_PIN);
+    }
+  } else if (checkResult.power == CHECK_STATUS_BAD_TIMEOUT) {
+    tone(SPEAKER_PIN, NOTE_E3);
+  }
 }
 
 void setGoodResultStatus(int* status) {
@@ -467,11 +603,18 @@ void setBadResultStatus(int* status) {
 }
 
 void decreaseResultStatus(int* status, uint32_t secondsIncreased) {
+  bool needSetAlarm = false;
   if (*status != CHECK_STATUS_OK) {
+    if (*status == 1) {
+      needSetAlarm = true;
+    }
     *status -= secondsIncreased;
     if (*status < 0) {
       *status = 0;
     }
+  }
+  if (needSetAlarm) {
+    setAlarm();
   }
 }
 
@@ -544,6 +687,16 @@ void setOnline(IPAddress ip) {
   }
 }
 
+float calculateVoltage(float adcValue) {
+  return adcValue *VOLTAGE_DIVIDER /1023.0;
+}
+
+void beep(int frequency) {
+  pinMode(SPEAKER_PIN, OUTPUT);
+  analogWriteFreq(frequency);
+  analogWrite(SPEAKER_PIN, frequency /2);
+}
+
 void beep(int frequency, int period) {
   pinMode(SPEAKER_PIN, OUTPUT);
   analogWriteFreq(frequency);
@@ -559,6 +712,95 @@ void beepAll() {
     delay(10);
   }
 }
+
+void drawScannerLine(float angle) {
+  while (angle < 0) {
+    angle += 360;
+  }
+  int xCenter = display.width() /2;
+  int yCenter = display.height() /2;
+  int length = xCenter < yCenter ? xCenter : yCenter;
+  drawLineAtAngle(xCenter, yCenter, angle, length);
+}
+
+void drawScannerPixel(float angle) {
+  while (angle < 0) {
+    angle += 360;
+  }
+  int xCenter = display.width() /2;
+  int yCenter = display.height() /2;
+  int length = xCenter < yCenter ? xCenter : yCenter;
+  drawPixelAtAngle(xCenter, yCenter, angle, length);
+}
+
+void drawScanner() {
+  drawScannerLine(scannerAngle);
+  drawScannerLine(scannerAngle -2);
+  drawScannerLine(scannerAngle -4);
+  drawScannerLine(scannerAngle -6);
+
+  for (int i = 0; i < 6; i++) {
+    drawScannerPixel(scannerAngle -6 -(i +1)*5);
+  }
+}
+
+void drawWarningText(char *text) {
+  display.setTextSize(2);
+  display.setTextColor(WHITE);
+  display.setCursor(0, 0);
+  display.println(text);
+}
+
+void drawMyIp(const char *text) {
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(15, 5);
+  display.println(text);
+}
+
+void drawBatteryVoltage(const char *text) {
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(15, display.height()-10);
+  display.println(text);
+}
+
+char lcdText[50];
+
+void drawMyIp() {
+  if (WiFi.status() == WL_CONNECTED) {
+    lcdText[0] = '.';
+    itoa(WiFi.localIP()[3], &lcdText[1], 10);
+    drawMyIp(lcdText);
+  }
+}
+
+void drawBatteryVoltage() {
+    lcdText[0] = '.';
+    sprintf(lcdText, "%.2f V", batteryVoltageAverage);
+    drawBatteryVoltage(lcdText);
+}
+
+void drawCheckResult() {
+  if (checkResult.wifi == CHECK_STATUS_BAD_TIMEOUT) {
+    drawWarningText("No\nWiFi");
+  } else if (checkResult.internet == CHECK_STATUS_BAD_TIMEOUT) {
+    drawWarningText("No\nInternet");
+  } else if (checkResult.group == CHECK_STATUS_BAD_TIMEOUT) {
+    drawWarningText("Group\ndown");
+    if (ignoreGroupDown) {
+      drawScanner();
+    }
+  } else if (checkResult.power == CHECK_STATUS_BAD_TIMEOUT) {
+    drawWarningText("No\nPower");
+    drawBatteryVoltage();
+  } else {
+    drawScanner();
+    drawMyIp();
+    drawBatteryVoltage();
+  }
+}
+
 
 void onWiFiConnected(const WiFiEventStationModeConnected& event) {
   Serial.print("[WiFi Event] Connected to AP: ");
@@ -582,5 +824,30 @@ void onWiFiGotIp(const WiFiEventStationModeGotIP& event) {
   Serial.print("[WiFi Event] Got IP: ");
   Serial.println(event.ip);
   setMe(event.ip);
+
+  if (getMonitorCountEffective() == 1) { // we are the only one in the group
+    Serial.println("we are the only one in the group");
+    if (checkResult.group != CHECK_STATUS_BAD_TIMEOUT) {
+      checkResult.group = CHECK_STATUS_OK;
+    }
+  }
+  
   pingWifiMonitorIndex = getMonitorStartIndex();
+}
+
+//-------
+
+
+void drawLineAtAngle(int xStart, int yStart, float angle, int length) {
+  float angleRadians = angle *DEG_TO_RAD;
+  int xEnd = xStart + length *sin(angleRadians);
+  int yEnd = yStart - length *cos(angleRadians);
+  display.drawLine(xStart, yStart, xEnd, yEnd, WHITE);
+}
+
+void drawPixelAtAngle(int xStart, int yStart, float angle, int length) {
+  float angleRadians = angle *DEG_TO_RAD;
+  int xEnd = xStart + length *sin(angleRadians);
+  int yEnd = yStart - length *cos(angleRadians);
+  display.drawPixel(xEnd, yEnd, WHITE);
 }
