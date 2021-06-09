@@ -397,9 +397,6 @@ void setup() {
   setBadResultStatus(&checkResult.power);
   
   setupServer();
-
-  
-    melodyPlayer.play(1, noInternetMelody, sizeof(noInternetMelody)/sizeof(MelodyPart));
 }
 
 void loop() {
