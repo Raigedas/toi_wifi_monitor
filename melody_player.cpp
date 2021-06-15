@@ -29,6 +29,13 @@ bool MelodyPlayer::stop() {
   return r;
 }
 
+bool MelodyPlayer::stop(MelodyPart _melody[]) {
+  if (melody == _melody) {
+    stop();
+  }
+  return false;
+}
+
 void MelodyPlayer::handle() {
   if (melody == NULL) {
     return;

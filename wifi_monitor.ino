@@ -515,6 +515,7 @@ void loop() {
     if (checkResult.group == CHECK_STATUS_BAD_TIMEOUT) {
       Serial.println("will ignore group down");
       ignoreGroupDown = true;
+      melodyPlayer.stop(groupDownMelody);
     }
   }
 

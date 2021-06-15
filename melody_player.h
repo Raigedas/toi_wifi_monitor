@@ -19,6 +19,7 @@ public:
   MelodyPlayer(byte _pin);
   bool play(int _priority, MelodyPart _melody[], unsigned int _partCount);
   bool stop();
+  bool stop(MelodyPart _melody[]);
   void handle();
 
 protected:
