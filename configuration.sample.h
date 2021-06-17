@@ -36,6 +36,8 @@ char websites[][HOSTNAME_LENGTH] = {
 
 #define VOLTAGE_DIVIDER (5.2)
 
+#define ADC_BATTERY_VCC_PIN A0
+
 
 #define SSD1306_I2C_ADDRESS 0x3C
 #define SSD1306_64_48
