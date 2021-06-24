@@ -476,8 +476,6 @@ void loop() {
       if (wifiMonitors[i].online) {
         if (wifiMonitors[i].me) {
           setGoodResultStatus(&checkResult.internet);
-        } else {
-          setGoodResultStatus(&checkResult.group);
         }
       } else {
         if (wifiMonitors[i].me) {
@@ -489,6 +487,9 @@ void loop() {
         serialPrint(&wifiMonitors[i].ip);
         Serial.println();
       }
+    }
+    if (isGroupOnline()) {
+      setGoodResultStatus(&checkResult.group);
     }
 
     if (batteryVoltageAverage < BATTERY_VOLTAGE_MINIMUM) {
@@ -719,6 +720,18 @@ void setOnline(IPAddress ip) {
       wifiMonitors[i].online = true;
     }
   }
+}
+
+bool isGroupOnline() {
+  for (byte i = getMonitorStartIndex(); i < getAllocatedMonitorCount(); i++) {
+    if (wifiMonitors[i].me) {
+      continue;
+    }
+    if (!wifiMonitors[i].online) {
+      return false;
+    }
+  }
+  return true;
 }
 
 float calculateVoltage(float adcValue) {
