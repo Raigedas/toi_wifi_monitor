@@ -624,12 +624,16 @@ void setGoodResultStatus(int* status) {
   if (*status != CHECK_STATUS_BAD_TIMEOUT) {
     *status = CHECK_STATUS_OK;
   }
+//  Serial.print("setGoodResultStatus new status: ");
+//  Serial.println(*status);
 }
 
 void setBadResultStatus(int* status) {
   if (*status == CHECK_STATUS_OK) {
     *status = BAD_STATUS_COUNTDOWN;
   }
+//  Serial.print("setBadResultStatus new status: ");
+//  Serial.println(*status);
 }
 
 void decreaseResultStatus(int* status, uint32_t secondsIncreased) {
